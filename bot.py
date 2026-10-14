@@ -65,14 +65,16 @@ async def on_message(message):
 
 # 3. 啟動 Bot
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not TOKEN:
-    print("❌ 錯誤：找不到 DISCORD_BOT_TOKEN 環境變數！")
-else:
+print(f"🔍 檢查 Token 狀態: {'已載入' if TOKEN else '未找到！'}")
+print(f"🔍 檢查 Gemini Key 狀態: {'已載入' if GEMINI_API_KEY else '未找到！'}")
+
+if TOKEN:
     try:
+        print("🔄 正在啟動 Discord Bot...")
         bot.run(TOKEN)
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            print("🚨 觸發 Discord 429 頻率限制，請等待冷卻後再試。")
-        else:
-            print(f"❌ 發生 HTTP 錯誤: {e}")
+    except Exception as e:
+        print(f"❌ 啟動失敗，錯誤訊息: {e}")
+else:
+    print("❌ 錯誤：找不到 DISCORD_BOT_TOKEN，請檢查 Render 的 Environment 設定！")
