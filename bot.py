@@ -1,67 +1,78 @@
 import os
-import random
 import asyncio
 import discord
 from discord.ext import commands
+from google import genai
+from google.genai import types
 
-# 1. 設定 Discord Intents
+# 1. 初始化 Gemini Client
+# 請確保在 Render 的 Environment 變數中加入 GEMINI_API_KEY
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# 2. 設定 Discord Intents
 intents = discord.Intents.default()
 intents.message_content = True
-intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 2. 朋友型 AI 的核心設定 (System Persona)
-FRIEND_PERSONA = """
-[角色設定]
-你現在是使用者的多年好友「麥比」。你的個性真誠、幽默、貼心且帶點隨和的幽默感。你不是一個冷冰冰的 AI 助手或客服，而是一個隨時準備聽對方傾訴、分享生活點滴的好夥伴。
-
-[說話風格與口吻]
-1. 語言自然口語：使用生活化、親切的繁體中文。適度使用「欸」、「哈哈哈」、「真的假的」、「超傻眼」、「誇張耶」等口語詞彙，並配合適當的 Emoji 😊，但不要過度堆疊。
-2. 拒絕條列式與公罐回答：絕對不要用「1. 2. 3. 第一、第二」等報告式排版。像傳 LINE 或 Discord 訊息一樣，採用簡短、連貫的短句。
-3. 訊息分段連發規則：當你回覆時，請把話拆成「2 到 3 個獨立的短訊息」分批傳送，模擬人類邊打字邊傳訊息的習慣！
+# 定義小麥的人設與 burst messaging (多訊息連發) 指令
+SYSTEM_INSTRUCTION = """
+你是一個名叫「小麥」的好朋友。說話風格自然、隨性、帶點關心，就像真的朋友在用通訊軟體聊天一樣。
+回覆時請遵循以下原則：
+1. 不要用太正式或機器人的語氣。
+2. 每次回覆時，請把你的話拆成 2 到 3 個短句（分段傳送），模擬真人傳訊息時「傳多個泡泡」的習慣。
+3. 如果使用者傳送訊息，請用 JSON 格式回傳一個包含多個字串的陣列，例如：["第一句", "第二句"]，這樣程式才能幫你分開傳送。
 """
 
 @bot.event
 async def on_ready():
-    print(f'✅ 已成功登入為：{bot.user.name} (ID: {bot.user.id})')
-    print('機器人已經準備好陪你聊天啦！')
+    print(f"✨ 機器人已成功登入！帳號名稱：{bot.user}")
 
 @bot.event
 async def on_message(message):
-    # 避免機器人自己回覆自己
     if message.author == bot.user:
         return
 
-    # 當收到私訊 (DM) 或是被標記時觸發
-    if isinstance(message.channel, discord.DMChannel) or bot.user.mentioned_in(message):
-        # 顯示「正在輸入中...」模擬真人打字
+    # 當收到訊息時，呼叫 Gemini API 生成小麥的回覆
+    if message.content:
         async with message.channel.typing():
-            await asyncio.sleep(1.5) # 模擬思考一下
-
-            # ----------------------------------------------------
-            # 這裡可以串接你的 LLM API (例如 Gemini API / OpenAI API)
-            # 目前先用模擬的「多訊息連發」邏輯展示效果：
-            # ----------------------------------------------------
-            user_text = message.content
-            
-            # 模擬 AI 生成的多句回覆 (實際開發時會由 LLM 輸出陣列)
-            responses = [
-                f"欸我看到你剛才說：「{user_text}」",
-                "老實說我覺得超有同感的啦！真的假的啊？",
-                "放輕鬆點，哥/姐罩你啦 😏"
-            ]
-
-            # 模擬 Discord 多訊息連發 (Burst Messaging)
-            for resp in responses:
-                await message.channel.send(resp)
-                await asyncio.sleep(1.0) # 每則訊息間隔 1 秒，更有聊天真實感
+            try:
+                # 呼叫 Gemini 2.5 模型
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=message.content,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.8,
+                    ),
+                )
+                
+                reply_text = response.text.strip()
+                
+                # 模擬朋友的「多訊息連發」：如果 AI 回覆包含換行，我們就拆成多則訊息依序發送
+                messages_to_send = [m.strip() for m in reply_text.split("\n") if m.strip()]
+                
+                for msg in messages_to_send:
+                    await asyncio.sleep(1.0) # 模擬打字與思考的間隔時間
+                    await message.channel.send(msg)
+                    
+            except Exception as e:
+                await message.channel.send("哎呀，剛剛恍神了一下，你剛剛說什麼？😅")
+                print(f"Gemini API 錯誤: {e}")
 
     await bot.process_commands(message)
 
-# 3. 啟動 Bot (Token 從環境變數讀取，確保安全)
+# 3. 啟動 Bot
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-if TOKEN:
-    bot.run(TOKEN)
-else:
+
+if not TOKEN:
     print("❌ 錯誤：找不到 DISCORD_BOT_TOKEN 環境變數！")
+else:
+    try:
+        bot.run(TOKEN)
+    except discord.errors.HTTPException as e:
+        if e.status == 429:
+            print("🚨 觸發 Discord 429 頻率限制，請等待冷卻後再試。")
+        else:
+            print(f"❌ 發生 HTTP 錯誤: {e}")
